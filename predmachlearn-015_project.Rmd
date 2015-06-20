@@ -1,0 +1,181 @@
+---
+title: "Prediction Assignment Writeup"
+date: "06/20/2015"
+output: html_document
+---
+
+This report presents a machine learning algorithm to predict activity quality from activity monitors. 
+
+# Summary
+
+The problem with predicting activity quality from actvity monitors is a classification problem. The machine learning/classification algorithm chosen in this report is random forest (RF) with resampling using 10-fold cross validation.  RF were chosen because it by some has been reported to be "[...] unexcelled in accuracy among current algorithms [...]" (http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm). Training data were split with 3/4 for training and 1/4 for estimation of the out-of-sample error rate. In short it can be mentioned that for the trained algorithm then the accuracy on training data were 0.987 and the out-of-sample error rate were 0.0128.
+
+# Structure of the report
+
+The report has the following structure: 
+
+1) Read data. First training and test data is downloaded and read into the work space. 
+2) Prepare training and test set. Then the training set data is split into the actual training data (3/4) and a test set (1/4). *The test set were later used for determining the out-of-sample error rate*. 
+3) Cleaning data: Then variables variables having no predictive value are removed. *In this context it means near zero variables, variables dependent on the time or the order in which data were collected, variables containing NA values and the variable respresenting the user. (This reduced the number of variables from 160 to 53)*. 
+4) Train model. Training are applied using using random forest with 10 fold cross validation. The train function  from the caret package with method "rf" are used. When using random forest from the caret package the default resampling method during training is boot for bootstrapning. Bootstraping turned out do be very time consuming on my old mac from 2010 which I used for generating this report. So, as already mentioned, in this report then the trainControl for resampling during training, were overriden to use 10-fold cross-validation. This showed faster "training evaluation times" and still showed high accuracy on training data and a relatively low out of sample error rate. Also, the choice of K=10, i.e. 10-fold cross-validation is because it is reported to have a good bias/variance trade off and has in the context of this report showed both good performance and high accuracy.  
+5) Estimate out-of-sample error. The out of sample error is estimated by applying the trained RF function on the test set.
+6) enerate prediction results for submission. Then it is shown how the prediction function is applied ont he testing set used for submission course submission. 
+7) Conclusion. Finally the report ends with a conclusion. 
+
+# 1 . Reading data
+The following R code will download the needed data (if not already downloaded) and load data into memory as data frames.
+```{r}
+# This file contains the data used in the report for both training and testing
+pml_training_file <- "pml-training.csv"
+# This file contains the data used for course evaluation of the generated prediction function
+pml_testing_file <- "pml-testing.csv"
+
+# Download files of not already exist
+if (!file.exists(pml_training_file)){
+pml_training_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(pml_training_url, destfile = pml_training_file, method="curl")
+}
+
+if (!file.exists(pml_testing_file)){
+pml_testing_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(pml_testing_url, destfile = pml_testing_file, method="curl")
+}
+
+# Read data into the active R environment
+pml_training <- read.csv(pml_training_file)
+pml_testing_for_submission <- read.csv(pml_testing_file)
+
+```
+
+# 2 - Training and Test set
+Below the provided training data is partitioned into 3/4 for training set and 1/4 for the test set.
+```{r}
+library(caret)
+# set seed to make sure that training partition is repeatable
+set.seed(4321)
+# partition data into a training set and a test set
+trainingIndex <- createDataPartition(pml_training$classe, p = 0.75, list = FALSE)
+training <- pml_training[trainingIndex, ]
+test <- pml_training[-trainingIndex, ]
+```
+
+# 3 - Cleaning data
+
+
+```{r}
+# Remember the dimension of the training data before cleanup
+dimBefore <- dim(training)
+
+#remove near zero car columns 
+nearZeroVarColumns <- nearZeroVar(training)
+training <- subset(training, select= -nearZeroVarColumns)
+
+#remove all NA columns
+training <- subset(training, select=colSums(is.na(training))== 0)
+
+
+# Remove variables dependent on time and the order in which data are collected
+training <- subset(training, select=-grep("timestamp", names(training)))
+training <- subset(training, select=-grep("window", names(training)))
+training <- subset(training, select=-grep("X", names(training)))
+
+# Remove user specific variables
+training <- subset(training, select=-grep("user_name", names(training)))
+
+# Get the dimension of training data after cleanup
+dimAfter <- dim(training)
+
+```
+The number of variables were reduced from
+
+```{r}
+dimBefore[2]
+```
+to
+```{r}
+dimAfter[2]
+```
+
+
+
+# 4 - Train model
+Now we wil train the prediction function using Random Forest and cross-validation.
+Using the caret package then this is just out-of-the-box functionality. We set the the train function to use method "rf" for random forest and then the trainControl method to specify that we would like to use cross-validation.
+The number of trees in the forest (ntree) were chosen to 10.
+```{r}
+library(caret)
+# set set so that the trained random forest model is redoable 
+set.seed(4321)
+# set the trainControl function to use cross validation, cv, with K=10
+ctrl <- trainControl(method = "cv", number = 10)
+# Now train the model
+#rfModel <- train(classe~., data=training, method="rf", trControl=ctrl, ntree=10 ,do.trace=T)
+rfModel <- train(classe~., data=training, method="rf", trControl=ctrl, ntree=10)
+```
+
+If we if print the model
+
+```{r}
+rfModel
+```
+
+We can see that the RF algorithm chose 27 variables for each split in the final model.
+
+
+The most important variables in the final model are
+
+```{r}
+varImp(rfModel)
+```
+
+
+# 5 - Estimate the out-of-sample error
+Now we estimate the out-of-sample error by looking into the error rate on our validation data set.
+Below apply the predict function of the validation set and print out the resulting confusion matrix.
+```{r}
+testPredicted <- predict(rfModel, test[, names(training)] )
+confusionMatrix <- confusionMatrix(testPredicted, test$classe)
+print(confusionMatrix)
+```
+From the confusion matrix we can see the the acuracy was 0.987.
+
+I.e. the out-of-sample error rate is 1 minus accuracy which is
+```{r}
+outOfSampleErrorRate <- 1- confusionMatrix$overall[["Accuracy"]]
+outOfSampleErrorRate
+```
+
+Without using the confusion matrix we can if course evaluate the out-of-sample error rate from  1 minus accuracy calculated as the mean of the correct answers below
+
+```{r}
+1 - mean(testPredicted == test$classe)
+```
+
+# 6 - Generate prediction results for submission
+
+Below we generate the predictions to be submitted as a part of the report
+
+```{r}
+# Select the variables in test set to be used for prediction
+pml_testing_for_submission <- pml_testing_for_submission[, names(subset(training, select=-classe))]
+
+# Apply prediction
+pml_testing_for_submissionPredicted <- predict(rfModel, pml_testing_for_submission)
+
+# Show results
+pml_testing_for_submissionPredicted 
+
+# Write prediction results to file system for submission
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files(pml_testing_for_submissionPredicted)
+```
+
+# 7 - Conclusion
+We have presented and machine learning algorithm using random forest and 10-fold cross validation. The accuracy on the training data were .987 and were also 0.987 on the test set. The out-of-sample error rate were 0.0128.
